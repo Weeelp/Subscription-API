@@ -1,6 +1,7 @@
-package database
+package repository
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 
@@ -8,32 +9,26 @@ import (
 
 	"pupupu/internal/config"
 	"pupupu/internal/logger"
+	"pupupu/internal/models"
 )
 
-type PSQL struct {
+var _ SubscriptionRepository = (*PostgresRepo)(nil)
+
+type PostgresRepo struct {
 	conn *sql.DB
 }
 
-type Subscription struct {
-	ID          int     `db:"id" json:"id"`
-	ServiceName string  `db:"service_name" json:"service_name"`
-	Price       int     `db:"price" json:"price"`
-	UserID      string  `db:"user_id" json:"user_id"`
-	StartDate   string  `db:"start_date" json:"start_date"`
-	EndDate     *string `db:"end_date" json:"end_date"`
-}
-
-func (p *PSQL) Close() {
+func (p *PostgresRepo) Close() {
 	if p.conn != nil {
 		p.conn.Close()
 	}
 }
 
-func (p *PSQL) GetConn() *sql.DB {
+func (p *PostgresRepo) GetConn() *sql.DB {
 	return p.conn
 }
 
-func Init(cfg *config.Config) *PSQL {
+func Init(cfg *config.Config) SubscriptionRepository {
 	dsn := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=%s",
 		cfg.PSQL.Host, cfg.PSQL.Port, cfg.PSQL.User, cfg.PSQL.Password, cfg.PSQL.Name, cfg.PSQL.SSLmode)
 
@@ -49,55 +44,55 @@ func Init(cfg *config.Config) *PSQL {
 	}
 
 	logger.Log.Info("PSQL connection success")
-	return &PSQL{
+	return &PostgresRepo{
 		conn: conn,
 	}
 }
 
-func (p *PSQL) CreateSub(s Subscription) (int, error) {
+func (p *PostgresRepo) CreateSub(ctx context.Context, s models.Subscription) (int, error) {
 	var id int
 	query := `INSERT INTO subscriptions (service_name, price, user_id, start_date, end_date)
 			VALUES ($1, $2, $3, $4, $5) RETURNING id`
 
-	err := p.conn.QueryRow(query, s.ServiceName, s.Price, s.UserID, s.StartDate, s.EndDate).Scan(&id)
+	err := p.conn.QueryRowContext(ctx, query, s.ServiceName, s.Price, s.UserID, s.StartDate, s.EndDate).Scan(&id)
 	if err != nil {
-		return 0, fmt.Errorf("failed to insert subscription: %w", err)
+		return 0, fmt.Errorf("failed to insert: %w", err)
 	}
 	return id, nil
 }
 
-func (p *PSQL) GetSubByID(id int) (Subscription, error) {
-	var s Subscription
+func (p *PostgresRepo) GetSubByID(ctx context.Context, id int) (models.Subscription, error) {
+	var s models.Subscription
 	query := `SELECT id, service_name, price, user_id, start_date, end_date 
 			FROM subscriptions WHERE id = $1`
 
-	err := p.conn.QueryRow(query, id).Scan(
+	err := p.conn.QueryRowContext(ctx, query, id).Scan(
 		&s.ID, &s.ServiceName, &s.Price, &s.UserID, &s.StartDate, &s.EndDate,
 	)
 
 	if err != nil {
 		if err == sql.ErrNoRows {
-			return Subscription{}, fmt.Errorf("subscription not found")
+			return models.Subscription{}, fmt.Errorf("subscription not found")
 		}
-		return Subscription{}, fmt.Errorf("query error: %w", err)
+		return models.Subscription{}, fmt.Errorf("query error: %w", err)
 	}
 
 	return s, nil
 }
 
-func (p *PSQL) GetAllSubs() ([]Subscription, error) {
+func (p *PostgresRepo) GetAllSubs(ctx context.Context) ([]models.Subscription, error) {
 	query := `SELECT id, service_name, price, user_id, start_date, end_date FROM subscriptions`
 
-	rows, err := p.conn.Query(query)
+	rows, err := p.conn.QueryContext(ctx, query)
 	if err != nil {
 		return nil, fmt.Errorf("query error: %w", err)
 	}
 	defer rows.Close()
 
-	var subs []Subscription
+	var subs []models.Subscription
 
 	for rows.Next() {
-		var s Subscription
+		var s models.Subscription
 		err := rows.Scan(&s.ID, &s.ServiceName, &s.Price, &s.UserID, &s.StartDate, &s.EndDate)
 		if err != nil {
 			return nil, fmt.Errorf("scan error: %w", err)
@@ -105,27 +100,24 @@ func (p *PSQL) GetAllSubs() ([]Subscription, error) {
 		subs = append(subs, s)
 	}
 
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-
-	return subs, nil
+	return subs, rows.Err()
 }
 
-func (p *PSQL) GetTotal(userID, serviceName, period string) (int, error) {
+func (p *PostgresRepo) GetTotal(ctx context.Context, userID, serviceName, period string) (int, error) {
 	var total int
 	query := `SELECT COALESCE(SUM(price), 0) FROM subscriptions 
             WHERE user_id = $1 AND service_name = $2 AND start_date = $3`
-	err := p.conn.QueryRow(query, userID, serviceName, period).Scan(&total)
+
+	err := p.conn.QueryRowContext(ctx, query, userID, serviceName, period).Scan(&total)
 	return total, err
 }
 
-func (p *PSQL) UpdateSub(id int, s Subscription) error {
+func (p *PostgresRepo) UpdateSub(ctx context.Context, id int, s models.Subscription) error {
 	query := `UPDATE subscriptions 
 			SET service_name = $1, price = $2, start_date = $3, end_date = $4 
 			WHERE id = $5`
 
-	res, err := p.conn.Exec(query, s.ServiceName, s.Price, s.StartDate, s.EndDate, id)
+	res, err := p.conn.ExecContext(ctx, query, s.ServiceName, s.Price, s.StartDate, s.EndDate, id)
 	if err != nil {
 		return err
 	}
@@ -137,18 +129,17 @@ func (p *PSQL) UpdateSub(id int, s Subscription) error {
 	return nil
 }
 
-func (p *PSQL) DeleteSub(id int) error {
-	query := `DELETE FROM subscriptions
-			WHERE id = $1`
+func (p *PostgresRepo) DeleteSub(ctx context.Context, id int) error {
+	query := `DELETE FROM subscriptions WHERE id = $1`
 
-	res, err := p.conn.Exec(query, id)
+	res, err := p.conn.ExecContext(ctx, query, id)
 	if err != nil {
-		return fmt.Errorf("failed to delete subscription: %w", err)
+		return fmt.Errorf("failed to delete: %w", err)
 	}
 
 	rows, _ := res.RowsAffected()
 	if rows == 0 {
-		return fmt.Errorf("subscription with id %d not found", id)
+		return fmt.Errorf("not found")
 	}
 
 	return nil

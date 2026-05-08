@@ -2,33 +2,38 @@ openapi: 3.0.0
 info:
   title: Subscriptions API
   version: 1.0.0
-  description: Сервис для агрегации данных о подписках пользователей.
+  description: Сервис для управления и агрегации данных о подписках пользователей.
 
 paths:
   /subscriptions:
     post:
       summary: Создать новую подписку
+      tags:
+        - Subscriptions
       requestBody:
+        description: Данные новой подписки
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subscription'
+              $ref: '#/components/schemas/SubscriptionRequest'
       responses:
         '201':
           description: Подписка успешно создана
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  id:
-                    type: integer
+                $ref: '#/components/schemas/CreateResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
     get:
       summary: Получить список всех подписок
+      tags:
+        - Subscriptions
       responses:
         '200':
-          description: Список подписок
+          description: Список всех подписок в системе
           content:
             application/json:
               schema:
@@ -37,73 +42,77 @@ paths:
                   $ref: '#/components/schemas/Subscription'
 
   /subscriptions/{id}:
+    parameters:
+      - $ref: '#/components/parameters/SubscriptionId'
     get:
       summary: Получить подписку по ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+      tags:
+        - Subscriptions
       responses:
         '200':
-          description: Данные подписки
+          description: Детальные данные подписки
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Subscription'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
     put:
       summary: Обновить данные подписки
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+      tags:
+        - Subscriptions
       requestBody:
+        required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Subscription'
+              $ref: '#/components/schemas/SubscriptionRequest'
       responses:
         '200':
-          description: Успешно обновлено
+          description: Данные успешно обновлены
+        '404':
+          $ref: '#/components/responses/NotFound'
+
     delete:
       summary: Удалить подписку
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
+      tags:
+        - Subscriptions
       responses:
-        '200':
-          description: Успешно удалено
+        '204':
+          description: Подписка успешно удалена (тело ответа отсутствует)
+        '404':
+          $ref: '#/components/responses/NotFound'
 
   /subscriptions/total:
     get:
-      summary: Суммарная стоимость за период
+      summary: Получить суммарную стоимость подписок за период
+      tags:
+        - Analytics
       parameters:
         - name: user_id
           in: query
           required: true
+          description: UUID пользователя
           schema:
             type: string
             format: uuid
         - name: service_name
           in: query
           required: true
+          description: Название сервиса
           schema:
             type: string
         - name: period
           in: query
           required: true
+          description: Период в формате ММ-ГГГГ
           schema:
             type: string
             example: "07-2025"
       responses:
         '200':
-          description: Итоговая сумма
+          description: Расчет стоимости выполнен
           content:
             application/json:
               schema:
@@ -111,10 +120,57 @@ paths:
                 properties:
                   total_price:
                     type: integer
+                    example: 1200
 
 components:
+  parameters:
+    SubscriptionId:
+      name: id
+      in: path
+      description: Уникальный идентификатор подписки
+      required: true
+      schema:
+        type: integer
+        example: 1
+
+  responses:
+    NotFound:
+      description: Ресурс не найден
+    BadRequest:
+      description: Некорректный формат запроса или данных
+
   schemas:
     Subscription:
+      type: object
+      properties:
+        id:
+          type: integer
+          description: Автоматически сгенерированный ID
+          example: 1
+        service_name:
+          type: string
+          description: Название подписки
+          example: "Yandex Plus"
+        price:
+          type: integer
+          description: Стоимость в валюте (целое число)
+          example: 400
+        user_id:
+          type: string
+          format: uuid
+          description: UUID владельца подписки
+          example: "60601fee-2bf1-4721-ae6f-7636e79a0cba"
+        start_date:
+          type: string
+          description: Дата начала подписки
+          example: "07-2025"
+        end_date:
+          type: string
+          description: Дата окончания (если есть)
+          nullable: true
+          example: "07-2026"
+
+    SubscriptionRequest:
       type: object
       required:
         - service_name
@@ -122,23 +178,27 @@ components:
         - user_id
         - start_date
       properties:
-        id:
-          type: integer
-          readOnly: true
         service_name:
           type: string
-          example: "Yandex Plus"
+          example: "Netflix"
         price:
           type: integer
-          example: 400
+          example: 999
         user_id:
           type: string
           format: uuid
           example: "60601fee-2bf1-4721-ae6f-7636e79a0cba"
         start_date:
           type: string
-          example: "07-2025"
+          example: "01-2024"
         end_date:
           type: string
-          example: "07-2026"
           nullable: true
+          example: null
+
+    CreateResponse:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 42
